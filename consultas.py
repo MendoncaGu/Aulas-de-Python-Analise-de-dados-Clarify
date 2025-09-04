@@ -11,8 +11,13 @@ consulta01 = '''
     '''
 
 consulta02 = '''
-        SELECT AVG(beer_servings) AS cerveja, AVG(spirit_servings) AS destilados, AVG(wine_servings)
+        SELECT AVG(beer_servings) AS cerveja, AVG(spirit_servings) AS destilados, AVG(wine_servings) AS vinhos
         FROM bebidas 
 
         
+        '''
+
+consulta03 = '''
+        SELECT (beer_servings) AS cerveja, (spirit_servings) AS destilado, (wine_servings) AS vinhos
+        FROM bebidas
         '''
