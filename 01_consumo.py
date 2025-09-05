@@ -45,7 +45,7 @@ html_template = f'''
     <ul>
         <li> <a href="{rotas[5]}">Comprar</a>  </li>
         <li> <a href="{rotas[6]}">Upload</a>  </li>
-        <li> <a href="{rotas[7]}">Apagar</a>  </li>
+        <li> <a href="{rotas[7]}">Apagar tabela</a>  </li>
         <li> <a href="{rotas[8]}">Ver tabela</a>  </li>
         <li> <a href="{rotas[9]}">V.A.A</a>  </li>
     </ul>
@@ -56,7 +56,7 @@ app = Flask(__name__)
 
 def getDbConnect():
     conn = sqlite3.connect(f'{caminho_banco}{nomebanco}')
-    conn.row.factory = sqlite3.Row
+    conn.row_factory = sqlite3.Row
     return conn
 @app.route(rotas [0])
 def index():
@@ -220,64 +220,124 @@ def upload():
     </from>
 
     '''
-@app.route(rotas[7])
+@app.route('/apagar_tabela/<nome_tabela>', methods=['GET'])
 def apagarTabela(nome_tabela):
     conn = getDbConnect()
     # realiza o apontamento para o banco que será manipulado
     cursor = conn.cursor()
     #usaremos o try except para controlar possiveis erros
-    # Comfirmar antes se a tabela já existe
-    cursor.execute(f"SELECT COUNT (*) FROM sqlite_master WHERE type = 'table' AND nome= '?'", (nome_tabela,))
-    #pega o resultado da cntagem(0 se não existir e 1 se existir)
-    existe = cursor.fetchone()[0]
-    if not existe:
+    # confirmar antes se a tabela existe
+    cursor.execute(f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{nome_tabela}'")
+    # pega o resultado da cntagem(0 se nao existir e 1 se existir)
+    existe = cursor.fetchone()[0] 
+    if not exists :
         conn.close()
-        return "tabela não encontrada"
+        return "Tabela não encontrada"
 
     try:
-        cursor.execute (f'DROP TABLE "{nome_tabela}"')
-        conn.comit()
+        cursor.execute(f'DROP TABLE "{nome_tabela}"')
+        conn.commit()
         conn.close()
-        return f"tabela {nome_tabela} apagada com sucesso"
+        return f"Tabela {nome_tabela} apagada com ssuceso!"
 
     except Exception as erro:
         conn.close()
-        return f"não foi possivel apagar a tabela erro: {erro}"
+        return f"Não foi possivel apagar a tabela erro: {erro}"
 
-@app.route(rotas[8], methods=["POST", "GET"])
+@app.route(rotas[8], methods=["POST","GET"])
 def ver_tabela():
     if request.method == "POST":
         nome_tabela = request.form.get('tabela')
-        if nome_tabela not in ['bebidas', 'vingadores']:
+        if nome_tabela not in ['bebidas','vingadores']:
             return f"<h3>Tabela {nome_tabela} não encontrada!</h3><br><a href={rotas[8]}>Voltar</a>"
 
-        conn = getDbConnect()
+        conn =getDbConnect()
         df = pd.read_sql_query(f"SELECT * from {nome_tabela}", conn)
         conn.close()
-
-        tabela_html = df.to_html(classes="table table-striped")
+        tabela_html = df.to_html(classes='table table-striped')
         return f'''
-            <h3>Conteudo da tabela {nome_tabela}: </h3>
+            <h3>Conteudo da tabela {nome_tabela}:</h3>
             {tabela_html}
-            <br><a href= {rotas[8]}>Voltar</a>
-
+            <br><a href={rotas[8]}>Voltar</a>
         '''
 
     return render_template_string('''
-    <marquee>Selecione a tabela a ser visualizada:</marquee>
-    <form method="POST">
-    <label for="tabela">Escolha a tabela abaixo:</label>
-    <select name="tabela">
-        <option value="bebidas">Bebidas</option>
-        <option value="vingadores">Vingadores</option>
-    </select>
-    </form>
-    <hr>
-    <input type="submit" value="Consultar Tabela">
-    <br><a href='{{rotas[0]}}>Voltar</a>
+        <marquee>Selecione a tabela a ser visualizada:</marquee>
+        <form method="POST">
+            <label for="tabela">Escolha a tabela abaixo:</label>
+            <select name="tabela">
+                <option value="bebidas">Bebidas</option>
+                <option value="vingadores">Vingadores</option>
+            </select>
+       
+        <hr>
+        <input type="submit" value="Consultar Tabela">
+        </form>
+        <br><a href={{rotas[0]}}>Voltar</a>
     ''', rotas=rotas)
 
+@app.route(rotas[7], methods=['POST', 'GET'])
+def apagarV2():
+
+    if request.method == "POST":
+        nome_tabela = request.form.get('tabela')
+        if nome_tabela not in ['bebidas', 'vingadores']:
+            return f"<h3>Tabela {nome_tabela} não encontrada!</h3><br><a href={rotas[7]}>Voltar</a>"
+    confirmacao = request.form.get('confirmacao')
+    conn = getDbConnect()
+    if confirmacao == "Sim":
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT name FROM sqlite_master WHERE type="table" AND name=?',(nome_tabela,))
+            if cursor.fetchone() is None:
+                return f"<h3>Tabela {nome_tabela} não encontrada no banco de dados!</h3><br><a href={rotas[7]}>Voltar</a>"
+            cursor.execute(f'DROP TABLE IF EXISTS "{nome_tabela}"')
+            conn.commit()
+            conn.close()
+            return f"<h3>Tabela {nome_tabela} excluida com suscesso! </h3><br><a href={rotas[7]}>Voltar</a>"
+            
+        except Exception as erro:
+            conn.close()
+            return f"<h3>Erro ao apagar a tabela {nome_tabela} Erro: {erro} </h3><br><a href={rotas[7]}>Voltar</a>"
+
+
+    return f'''
+    <html>
+        <head>
+        <title><marquee> CUDADO! </marquee></title>
+    </head>
+    <body>
+    <h2> Selecione a tabela para apagar  </h1>
+    <form method="POST"    id="formApagar">
+        <label for="tabela"> Escolha na tabela abaixo </label>
+            <select name="tabela" id="tabela">
+                <option value="bebidas">Bebidas</option>
+                <option value="vingadores">Vingadores</option>
+            </select>
+        <input type="hidden" name="confirmacao" value="" id="confirmação">
+        <input type="submit" value="-- Apagar! --" onclick="return confirmarExclusao();">
+
+      </form>
+      <br><a href={{rotas[0]}}>Voltar</a>
+       <script type="text/javascript">
+        function confirmarExclusao
+        var ok = confirm('Tem certeza de que deseja apagar a tabela selecionada');
+        if(ok) {{
+            document.getElementById('confirmacao').value = 'Sim';
+            return true;
+        }}
+        else {{
+            document.getElementById('confirmacao').value - 'Não';
+            return false;
+        }}      
+       </script>
+        </body>
+        </html>    
+    '''
+
+
 #inicia o servidor
+
 if __name__ == '__main__':
     app.run(
         debug = config.FLASK_DEBUG,
