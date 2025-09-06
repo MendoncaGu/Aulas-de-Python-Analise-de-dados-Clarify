@@ -334,7 +334,245 @@ def apagarV2():
         </body>
         </html>    
     '''
+@app.route(rotas[9], methods = ['GET', 'POST'])
+def vaa_mortes_consumo():
+    metricas_beb = {
+        "Total (L de Alcool)":"total_litres_of_pure_alcochol",
+        "Cerveja (Doses)":"bear_servings",
+        "Destilados (Doses)":"spirit_servings",
+        "Vinhos(Doses)":"wine_servings"
+    } 
 
+    if request.method == "POST":
+        met_beb_key = request.form.get("metrica_beb") or "Total (L de Alcool)"
+        met_beb = metricas_beb.get(met_beb_key, "total_litres_of_pure_alcochol")
+
+        #semente opcional para reproduzir a mesma distribuição de paises nos vingadores
+        try:
+            semente = int(request.form.get("semente"))
+
+        except:
+            semente = 42
+        sementeAleatoria = random.Random(semente) #gera o valor aleatorio baseado na semente escolhida
+
+    #le os dados do sql
+    with getDbConnect() as conn:
+        dfA = pd.read_sql_query('SELECT * FROM vingadores', conn)
+        dfB = pd.read_sql_query('SELECT country, beer_servings, spirit_servings, wine_servings, total_litres_of_pure_alcohol FROM bebidas', conn)
+
+    # ---- Morte dos vingadores
+    # estrategia: somar colunas que contenha o death como true (case-insensitie)
+    # contamos não-nulos como 1, ou seja, death1 tem True? vale 1, caso contrario 0
+
+    death_cols = [c for c in dfA.columns if "death" in c.lower()]
+    if death_cols:
+        dfA["Mortes"] = dfA[death_cols].notna().astype(int).sum(axis=1)
+    elif "Deaths" in dfA.columns:
+        #fallback
+        dfA["Mortes"] = pd.to_numeric(df["Deaths"], errors="coerce").fillna(0).astype(int)
+
+    else: 
+        dfA["Mortes"] = 0
+
+    if "Name/Alias" in dfA.columns:
+        col_name = "Name/Alias"
+    elif "Name" in dfA.columns:
+        col_name = "Name"
+    elif "Name" in dfA.columns:
+        col_name = "Alias"
+
+    else:
+        possivel_texto = [c for c in dfA.columns if dfA[c].dtype == "object"]
+        col_nome = possivel_texto[0] if possivel_texto else dfA.columns[0]
+
+    dfA.rename(columns={col_name: "Personagem"}, inplace=True)
+
+    # ------- sortear um pais para cada vingador
+    paises = dfB["country"].dropna().astype(str).to_list()
+    if not paises:
+        return f"<h3>Não há paises na tabela de bebidas!</h3><a href= {{rotas[9]}}>Voltar</a>"
+
+    dfA["Pais"] = [sementeAleatoria.choice(paises) for _ in range(len(dfA))]
+
+    dfB_cons = dfB[["country", met_beb]].rename(columns={
+        "contry":'pais',
+        met_beb: "consumo"
+    })
+    base = dfA[["Personagem", "Mortes","Pais"]].merge(dfB_cons, on="Pais", how="left")
+
+    #filtar apenas linhas validas
+    base = base.dropna=(subset==['consumo'])
+    base["Mortes"] = pd.to_numeric(base["Mortes"], errors="coerce").fillna(0).astype(int)
+    base = base[base["Mortes"] >= 0]
+    #correlacao (se possivel)
+    corr_txt = ""
+    if base['consumo'].notna().sum() >= 3 and base["Mortes"].notna().sum() >= 3:
+        try:
+            corr = base["consumo"].corr(base["Morte"])
+            corr_txt = f'• r = {corr:.3f}'
+        except: Exception
+        pass
+
+    #------------ GRAFICO SCATTER 2D: CONSUMO X MORTES (COR = PAIS) ------
+    fig2d = px.Scatter(
+        base,
+        x = "consumo",
+        y = "mortes",
+        color = "pais",
+        hover_name="personagem",
+        hover_data = { 
+        "pais":True,
+        "consumo": True,
+        "mortes": True
+        },
+        title = f"Vingadores - Mortes VS consumo de alcool do pais({met_beb_key}){corr_txt}"
+
+    )
+    fig2d.update_layout(
+        xaxis_title = f"{met_beb_key}",
+        yaxis_title = "Mortes (contagem)",
+        margin = dict(l=40, r=20, t=70, b=40)
+
+    )
+    return (
+        "<h3> --- Grafico 2D ---- </h3>",
+        fig2d.to_html(full_html=False)
+        + "<hr>"
+        + "<h3> --- Grafico 3D --- </h3>"
+        + "<p> Em Breve </p>"
+        + "<hr>"
+        + "<h3> ----- preview dos dados ---- </h3>"
+        + "<p> Em Breve </p>"
+        + "<hr>"
+        + f"<a href ={rotas[9]}>Voltar</a>"
+        +"<br>"
+        + f"<a href ={rotas[0]}>Menu Inicial</a>"
+    ) 
+
+
+    return render_template_string('''
+    <style>
+   
+    body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f4f6f8;
+    color: #333;
+    line-height: 1.6;
+}
+
+
+form {
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 30px;
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+
+h2 {
+    text-align: center;
+    color: #2c3e50;
+    margin-top: 40px;
+}
+
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #34495e;
+}
+
+
+select,
+input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 20px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background-color: #fefefe;
+    font-size: 1rem;
+}
+
+
+input[type="submit"] {
+    width: 100%;
+    padding: 12px;
+    background-color: #2980b9;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+input[type="submit"]:hover {
+    background-color: #1f6391;
+}
+
+
+p {
+    max-width: 700px;
+    margin: 20px auto;
+    padding: 0 20px;
+    color: #555;
+    text-align: center;
+}
+
+
+a {
+    display: block;
+    text-align: center;
+    margin-top: 20px;
+    color: #2980b9;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+
+@media (max-width: 600px) {
+    form {
+        margin: 20px;
+        padding: 20px;
+    }
+}
+    
+    </style>
+    
+    <h2> V.A.A - Pais X Consumo X Mortes </h2>
+        <form method="POST">
+            <label for="metricas_beb"> metrica de consumo </label>
+            <select name="metricas_beb" id="metricas_beb>
+                {% for metricas in metricas_beb.keys() %}<opition value= "{{metricas}}"> {{metricas}} </ option>
+                
+                {% endfor %}
+
+            </select>
+            <br><br>
+            <label for="semente"> <b>Semente: </b> (<i>opcional, p/ reprodutibilidade</i>) </label>
+            <input type="number" name="semente" id="semente" value="42">
+
+            <br><br>
+            <input type="submit" value="-- Gerar Grafico --">
+
+        </form>
+    
+        <p>
+            Esta visão sorteia um pais de cada vingador, soma as mortes dos personagens (Usando todas as colunas que contenham Death) e anexa o consumo de alcool do pais, ao fim pilota um scatter 2d e 3d
+            </p>
+            <br>
+            <a href= {{rotas[0]}}>Voltar</a>
+    ''', metricas_beb = metricas_beb, rotas=rotas)
 
 #inicia o servidor
 
@@ -344,3 +582,4 @@ if __name__ == '__main__':
         host = config.FLASK_HOST,
         port = config.FLASK_PORT
     )
+    
