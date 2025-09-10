@@ -56,7 +56,7 @@ for pagina in range(1, paginaLimite +1):
                     filme_soup = BeautifulSoup(filme_resposta.text, "html.parser")
                 
 
-                    diretor_tag = filme_soup.find("div", class_="meta-body-item meta-body-direction")
+                    diretor_tag = filme_soup.find("div", class_="meta-body-item meta-body-direction meta-body-oneline")
                     if diretor_tag:
                         diretor = (
                           diretor_tag.text
@@ -69,13 +69,13 @@ for pagina in range(1, paginaLimite +1):
                           .strip()
                         )
                     #capturar os generos
-                    genero_block = filme_soup.find('div', class_='meta-body-info')
+                    genero_block = filme_soup.find('div', class_='meta-body-item meta-body-info')
             
             #captura dos generos (fallback se não acessou o link)
             if genero_block:
                 genero_links = genero_block.find_all('a')
                 generos = [g.text.strip() for g in genero_links]
-                categoria = ", ".join(generos[:3] if generos else "N/A")
+                categoria = ", ".join(generos[:3]) if generos else "N/A"
             else:
                 categoria = "N/A"
 
@@ -113,7 +113,7 @@ df = pd.DataFrame(filmes)
 print(df.head())
 
 # vamos salvar os dados em um arquivo csv
-df.to_csv(saidaCSV, index = False, encoding = 'utf-8-sig', quotechar = "'", quoting = 1)
+df.to_csv(saidaCSV, index=False, encoding='utf-8-sig', quotechar="'", quoting=1)
 
 # montagem do salvamento no banco de dados
 
@@ -123,7 +123,7 @@ with sqlite3.connect(bancoDados) as conn:
     #tabela simples: link unico para evitar a repetição ao roda de novo (idempotente)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS filmes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Titulo TEXT,
                 Direcao TEXT,
                 Nota REAL,
@@ -132,11 +132,11 @@ with sqlite3.connect(bancoDados) as conn:
                 Categoria TEXT
         )
     ''')
-#inserir cada filme coletado
+    #inserir cada filme coletado
     for filme in filmes:
         try:
             cursor.execute('''
-                INSERT OR IGNOR INT filmes (Titulo, Direcao, Nota, Link, Ano, Categoria) VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO filmes (Titulo, Direcao, Nota, Link, Ano, Categoria) VALUES (?, ?, ?, ?, ?, ?)
             
             ''',(
                 filme['Titulo'],
@@ -144,13 +144,13 @@ with sqlite3.connect(bancoDados) as conn:
                 float(filme['Nota']) if filme['Nota'] != 'N/A' else None,
                 filme['Link'],
                 filme['Ano'],
-                filme['Categoria'],
+                filme['Categoria']
             ))
         
-        except: Exception as erro:
-        print(f'Erro ao inserir filme {filme['Titulo']} no banco de dados. \nDetalhes: {erro}')
-        conn.commit()
-        conn.close()
+        except Exception as erro:
+            print(f"Erro ao inserir filme {filme['Titulo']} no banco de dados.\nDetalhes: {erro}")
+            conn.commit()
+            conn.close()
 
 termino = datetime.datetime.now()
 print("--------------------------------------")
