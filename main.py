@@ -1,315 +1,215 @@
-from flask import Flask, request, jsonify, render_template_string
 import pandas as pd
-import sqlite3
-import os
-import plotly.graph_objs as go
-from dash import Dash, html, dcc
-import dash
 import numpy as np
-import config
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+import plotly.graph_objs as go
 
-app = Flask(__name__)
-DB_PATH = config.DB_PATH
+folder = 'C:/Users/noturno/Desktop/Python 2 - Gustavo/Airbnb/'
+t_ny = 'ny.csv'
+t_rj = 'rj.csv'
 
-def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-           CREATE TABLE IF NOT EXISTS inadimplencia(
-                mes TEXT PRIMARY KEY,
-                inadimplencia REAL
-        )
-        ''')
-        cursor.execute('''
-           CREATE TABLE IF NOT EXISTS selic(
-                mes TEXT PRIMARY KEY,
-                selic_diaria REAL
-        )
-        ''')
+def standartize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
 
-vazio = 0
+    lat_candidates = ['lat','latidute','Latitude','LAT','Lat','LATITUDE']
+    lon_candidates = ['lon','LON','Lon','Longitude','LONGITUDE', 'Long', 'Lng']
+    cost_candidates = ['custo','valor','coust','cost','price','preço']
+    name_candidates = ['nome', 'name', 'titulo', 'title', 'local', 'place', 'descricao']
 
-@app.route('/')
-def index():
-    return render_template_string('''
-        <h1> Upload de dados Economicos </h1>
-            <form action= "/upload" method = "POST" enctype="multipart/form-data"> 
-            <label for= "campo_inadimplencia">Arquivo de inadimplencia: (CSV) </label>
-            <input name= "campo_inadimplencia" type="file" requierd>
-            <br> <br>
-            <label for= "campo_sellic">Arquivo de taxa_selic: (CSV) </label>
-            <input name= "campo_sellic" type="file" required>
-            <br> <br>
-            <input type= "submit" value = "Fazer Upload">
-    </form>
-    <br><br>
-    <hr>
-        <br><a href="/consultar"> Consultar dados Armazenados </a>
-        <br><a href="/graficos"> Visualizar Graficos </a>
-        <br><a href="/editar_inadimplencia"> Editar dados da Inadimplencia </a>
-        <br><a href="/correlacao"> Analisar Correlação </a>
-        
-    ''')
+    def pick(colnames, candidates):
+        #colnames: lista de nomes das colunas da tabela
+        #candidates: lista de possiveis nomes das colunas a serem encontradas
+        for c in candidates:
+        #percorre cada candidato (c) dentro da lista de candidatos
+            if c in colnames:
+            # se o candidato for exatamente igual a um dos nomes em colnames (tabela)
+                return c
+                # retorna esse candidato imediatamente
+        for c in candidates:
+            #se nao encontrou a correspondencia
+            #percorre novamente cada coluna
+            for col in colnames:
+                #aqui percorre cada nome de coluna
+                if c.lower() in col.lower():
+                   #apenas com minusculas 
+                    return col
+                    # retorna a coluna imediatamente       
+        return None
+        #se não encontrou nenhuma coluna, nem exato nem parcial, retorna none
 
-@app.route('/upload',methods=["POST", "GET"])
-def upload():
-    inad_file = request.files.get('campo_inadimplencia')
-    selic_file = request.files.get('campo_sellic')
 
-    #verificar se os arquivos foram recebidos
-    if not inad_file or not selic_file:
-        return jsonify({'Erro':"Ambos os arquivos devem ser enviados"})
+    lat_col = pick(df.columns, lat_candidates)
+    lon_col = pick(df.columns, lon_candidates)
+    cost_col = pick(df.columns, cost_candidates)
+    name_col = pick(df.columns, name_candidates)
+
+    if lat_col is None or lon_col is None:
+        raise ValueError(f'Não foi encontrada a Latitude e Longitude: {list(df.columns)}')
     
-    inad_df = pd.read_csv(
-        inad_file,
-        sep = ';',
-        names = ['data','inadimplencia'],
-        header = 0
+    out = pd.DataFrame()
+    out['lat'] =    pd.to_numeric(df[lat_col], errors='coerce')
+    out['lon'] =    pd.to_numeric(df[lon_col], errors='coerce')
+    out['custo'] =  pd.to_numeric(df[cost_col], errors='coerce')
+    out['nome'] =   pd.to_numeric(df[name_col], errors='coerce')
+
+    #remove as linhas sem coordenadas
+    out = out.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+
+    # preenche o custo se for ausnte
+    if out['custo'].notna().any():
+        med = float (out['custo'].median())
+        if not np.isfinite(med):
+            med = 1.0
+        out['custo'] = out['custo'].fillna(med)
+    else:
+        out['custo'] = 1.0
+    return out
+
+def city_center(df: pd.DataFrame) -> dict:
+    '''
+        define a funcao citycenter que encontra a latitude e longitude media
+        de um grande volume de dados
+        --- recebe como pareamento um dataframe pandas---
+        --- deve retornar um dicionario (-> dict)
+    '''
+    return dict(
+        lat = float(df['lat'].mean()),
+        lon = float(df['lon'].mean()),
     )
-    selic_df = pd.read_csv(
-        selic_file,
-        sep = ';',
-        names = ['data','selic_diaria'],
-        header = 0
+#----------------traces-------------------------------------
+def make_point_trace(df:pd.DataFrame, name:str) -> go.Scattermapbox:
+    hover = (
+        "<b>%{customdata[0]}</b><br>"
+        "Custo: %{customdata[1]}<br>"
+        "Lat: %{lat:.5f}<br>"
+        "Lon: %{lon:.5f}"
     )
-    inad_df['data'] = pd.to_datetime(inad_df['data'], format = '%d/%m/%Y')
-    selic_df['data'] = pd.to_datetime(selic_df['data'], format ='%d/%m/%Y')
+     # tamanho dos marcadores (normalizados pelo custo)
+    c = df['custo'].astype(float).values
+    c_min, c_max = float(np.min(c)), float(np.max(c))
 
-    inad_df['mes'] = inad_df['data'].dt.to_period('M').astype(str)
-    selic_df['mes'] = selic_df['data'].dt.to_period('M').astype(str)
+    #CASO ESPECIAL: se não existirem valores numericos validos ou se todos os custos forem praticamente iguais (diferença < 1-9) cria uma array de tamanho fixo 10 para todos os pontos
+    if not np.isfinite(c_min) or not np.isfinite(c_max) or abs(c_max - c_min) < 1e-9:
+        size = np.full_like(c, 10.0, dtype = float)
+    else:
+        #CASO COMUM: normalizar os custos para um intervalo [0,1] e a escala pode variar entre 6 e 26 (20 de amplitude mais deslocamento de 6)
+        #pontos de custos baixos ~6 pontos de custo alto ~26
 
-    inad_mensal = inad_df[['mes','inadimplencia']].drop_duplicates()
-    selic_mensal = selic_df.groupby('mes')['selic_diaria'].mean().reset_index()
+        size = (c - c_min) / (c_max - c_min) * 20 + 6
+    # mesmo que os dados estejam fora da faixa de 6 a 26 ele evita sua apresentação, forçando a ficar entre o intervalo
+    sizes = np.clip(size, 6, 26)
+    #axis 1 empilha as colunas lado a lado
+    custom = np.stack([df['nome'].values, df['custo'].values], axis=1)
 
-    with sqlite3.connect(DB_PATH) as conn:
-        inad_mensal.to_sql('inadimplencia', conn, if_exists = 'replace', index=False)
-        selic_mensal.to_sql('selic', conn, if_exists='replace', index=False)
-        return jsonify ({'Mensagem':'Dados armazenados com sucesso!'})
-    
-@app.route('/consultar', methods=['POST','GET'])
-def consultar():
-    if request.method == "POST":
-        tabela = request.form.get('campo_tabela')
-        if tabela not in ['inadimplencia','selic',]:
-            return jsonify ({'Erro':'Tabela invalida'}), 400
-        with sqlite3.connect(DB_PATH) as conn:
-            df = pd.read_sql_query(f"SELECT * FROM {tabela}", conn)
-        return df.to_html(index=False)
-    
-    return render_template_string('''
-        <h1>Consulta de tabelas</h1>
-        <form method = 'POST'>
-            <label for= "campo_tabela"> Escolha a tabela: </label>
-            <select name= "campo_tabela">
-                <option value="inadimplencia">Inadimplencia</option>                           
-                <option value="selic">Taxa Selic</option>
-            </select>
-            <br>
-            <input type="submit" value="Consultar">
-            </form>
-     ''')
-@app.route('/graficos')
-def graficos():
-    with sqlite3.connect(DB_PATH) as conn:
-        inad_df = pd.read_sql_query('SELECT * FROM inadimplencia', conn)
-        selic_df = pd.read_sql_query('SELECT * FROM selic', conn)
-
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(
-        x = inad_df['mes'],
-        y = inad_df['inadimplencia'],
-        mode = 'lines+markers',
-        name = 'Inadimplencia'
-        ))
-    # ''
-    fig1.update_layout(
-        title = 'Evolução da inadimplencia',
-        xaxis_title = 'mês',
-        yaxis_title = '%',
-        template = 'plotly'
-    )
-
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(
-        x = selic_df['mes'],
-        y = selic_df['selic_diaria'],
-        mode = 'lines+markers',
-        name = 'taxa selic'
-))
-    fig2.update_layout(
-        title = 'Media Mensal da Selic',
-        xaxis_title = 'Mês',
-        yaxis_title = 'Taxa',
-        template = 'plotly'
-    )
-
-    graph_html_1 = fig1.to_html(full_html=False, include_plotlyjs='cdn')
-    graph_html_2 = fig2.to_html(full_html=False, include_plotlyjs='False')
-
-    return render_template_string('''
-        <html>
-            <head>
-                <title> Graficos Economicos</title>
-                <style>
-                    .container{
-                        display:flex;
-                        justfy-content:space-around;
-                    }
-                    .graph{
-                        width:48%;
-                    }
-                
-                </style>
-            </head>  
-            <body>
-                <h1>Graficos Economicos</h1>
-                <div class="container">
-                    <div class="graph">{{grafico1|safe}}</div>
-                    <div class="graph">{{grafico2|safe}}</div>
-                </div>
-            </body>                 
-        </html>
-    ''')
-@app.route('/editar_inadimplencia', methods = ['POST', 'GET'])
-def editar_inadimplencia():
-    if request.method == 'POST':
-        mes = request.form.get('campo_mes')
-        novo_valor = request.form.get('campo_valor')
-        try:
-            novo_valor = float(novo_valor)
-        except:
-            return jsonify({'mensagem': 'Valor Invalido'})
-        
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE inadimplencia SET inadimplencia = ? WHERE mes = ?", (novo_valor, mes))
-            conn.commit()
-        return jsonify({"mensagem":f"Valor atualizado com sucesso para o mes {mes}"})
-
-    return render_template_string('''
-        <h1> Editar Inadimplencia </h1>
-        <form method="post" action="/editar_inadimplencia">
-            <label for="campo_mes">Mês (AAAA-MM)</label>
-            <input type="text" name="campo_mes"><br>
-
-             <label for="campo_valor">Novo valor de Inadimplencia</label>
-            <input type="text" name="campo_valor"><br>
-
-            <input type ="submit" value="Atualizar">
-        </form>
-    ''')
-
-@app.route('/correlacao')
-def correlacao():
-    with sqlite3.connect(DB_PATH) as conn:
-        inad_df = pd.read_sql_query("SELECT * FROM inadimplencia", conn)
-        selic_df = pd.read_sql_query("SELECT * FROM selic", conn)
-
-    merged = pd.merge(inad_df, selic_df, on='mes')
-    #calcula a correlação entre as duas colunas, ou seja, o coeficiente de correlação de person
-    #1 é correlação positiva perfeita
-    #0 é sem correlação
-    #-1 é correlação negativa perfeita
-
-    correl = merged['inadimplencia'].corr(merged['selic_diaria'])
-
-    #regressão linear para a visualização
-    # o polift encontra os coeficientes de 'm' (inclinação) e b (intercepto) da regra de regressão linear
-    # Essa linha mostra a tendência geral: se a inadimplencia sobe ou desce conforme a SELIC varia.
-
-    x = merged['selic_diaria']
-    y = merged['inadimplencia']
-
-    m, b = np.polyfit(x, y, 1)
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x = x,
-        y = y,
+    return go.Scattermapbox(
+        lat= df['lat'],
+        lon= df['lon'],
         mode= 'markers',
-        name= 'Inadimplencia X Selic',
         marker= dict(
-            color = 'rgba(0,123,255,0.8)',
-            size = 12,
-            line = dict(width = 2, color = 'white'),
-            symbol = 'circle'
-        ),
-        hovertemplate = 'SELIC: %{x:.2f}%<br>Inadimplencia: %{y:.2f}%<extra></extra>'
-    ))
-    fig.add_trace(go.Scatter(
-        x = x,
-        y = m * x + b, #façamos a inclinação multiplicada pelo valor do ponto de dado mais o intercepto gerando nossa linha do grafico
-        mode= 'lines',
-        name = 'Linha de tendencia',
-        line = dict(
-            color = 'rgba(220,53,69,1)',
-            width = 4,
-            dash = 'dot'
-        
+            size = sizes,
+            color = df['custo'],
+            colorscale = 'Viridis',
+            colorbar = dict(title='Custo')
+        ),            
+        name= f'{name} • Pontos',
+        hovertemplate= hover,
+        customdata= custom
+    )
+
+def make_density_trace(df: pd.DataFrame, name: str) -> go.Densitymapbox:
+    return go.Densitymapbox(
+        lat= df['lat'],
+        lon= df['lon'],
+        z = df['custo'],
+        radius = 20,
+        colorscale= 'Inferno',
+        name = f'{name} • Pontos',
+        showscale= True,
+        colorbar= dict(title = 'custo')
+
+    )
+#--------------------------main-----------------------
+def main():
+    #carregando os dados e padronizado
+    ny = standartize_columns(pd.read_csv(f'{folder}{t_ny}'))
+    rj = standartize_columns(pd.read_csv(f'{folder}{t_rj}'))
+
+    #cira os quatro traces (NY pontos e calor, RJ pontos e calor)
+    ny_point = make_point_trace(ny, 'Nova York')
+    ny_heat = make_density_trace(ny, 'Nova York')
+
+    rj_point = make_point_trace(rj, 'Rio de Janeiro')
+    rj_heat = make_density_trace(rj, 'Rio de Janeiro')
+
+    fig = go.Figure([ny_point, ny_heat, rj_point, rj_heat])
+
+    def center_zoom(df, zoom):
+        return dict(
+            center = city_center(df),
+            zoom = zoom
         )
-    ))
+
+    buttons = [
+        dict(
+            label = 'Nova York • Pontos',
+            method = 'update',
+            args = [
+                {'visible':[True, False, False, False]},
+                {'mapbox': center_zoom(ny, 9)}
+            ]
+        ),
+        dict(
+            label = 'Nova York • Calor',
+            method = 'update',
+            args = [
+                {'visible':[False, True, False, False]},
+                {'mapbox': center_zoom(ny, 9)}
+            ]
+        ),
+        dict(
+            label = 'Rio de Janeiro • Pontos',
+            method = 'update',
+            args = [
+                {'visible':[False, False, True, False]},
+                {'mapbox': center_zoom(rj, 10)}
+            ]
+        ),
+        dict(
+            label = 'Rio de Janeiro • Calor',
+            method = 'update',
+            args = [
+                {'visible':[False, False, False, True]},
+                {'mapbox': center_zoom(rj, 10)}
+            ]
+        )
+
+    ]
     fig.update_layout(
-        title ={
-            'text':f'<br>Correlação entre Selic e Inadimplencia</b><br><span style="font-size:16px">Coeficiente de correlação:{correl:.2f}</span>',
-            'y':0.95,
-            'x':0.5,
-            'yanchor':'top',
-            'xanchor':'center',
-        },
-        xaxis_title = dict(
-            text= 'Selic média mensal (%)',
-            font=dict(size=12, color='gray')
-        ),
-        yaxis_title = dict(
-            text= 'Inadimplencia (%)',
-            font=dict(size=12, color='gray') 
-        ),
-        xaxis = dict(
-            tickfont=dict(size=14, color='black'),
-            gridcolor = 'lightgray'
-        ),
-        yaxis = dict(
-            tickfont=dict(size=14, color='black'),
-            gridcolor = 'lightgray'
-        ),
-        plot_bgcolor = "#f8f9fa",
-        paper_bgcolor = 'white',
-        font = dict(size = 14, color = 'black'),
+        title = 'Mapa interativo de Custos ○ Pontos e mapa de Calor',
+        mapbox_style = 'open-street-map', #satellite-streets
+        mapbox = dict(center = city_center(rj), zoom = 10),
+        margin = dict(l=10, r=10, t=50, b=10),
+        updatemenus = [dict(
+            buttons = buttons,
+            direction = 'down',
+            x = 0.01,
+            y = 0.99,
+            xanchor = 'left',
+            yanchor = 'top',
+            bgcolor = 'white',
+            bordercolor = 'lightgrey'
+        )],
         legend = dict(
             orientation = 'h',
-            yanchor = 'bottom',
-            y = 1.05,
-            xanchor = 'center',
-            x = 0.5,
-            bgcolor = 'rgba(0,0,0,0)',
-            borderwidth = 0
-        ),
-        margin = dict(l=60, r=60, t=120, b=60)
+            yanchor = 'bottom', 
+            xanchor = 'right',
+            y = 0.01,
+            x = 0.99
+        ) 
     )
-    graph_html = fig.to_html(full_html=False, include_plotlyjs = 'cdn')
-    return render_template_string('''
-        <html>
-            <head>
-                <title>correlação selic vs inadimplencia</title>
-                <style>
-                    body{background-color: #ffffff; color:#333;}
-                    h1{margin-top:40px;}
-                    .container{width:90%; margin: auto; text-aling: center;}          
-                </style>
-            </head>                  
-            <body>
-                <div class='container'>
-                    <h1>Correlação entre Selic e Inadimplencia</h1>
-                    <div>{{grafico|safe}}</div>           
-                </div>
-            </body>
-        </html>
-                                  
-    ''', grafico = graph_html)
 
+    #salvar em HTML criando uma pagina com os dados sem precisar de um servidor para rodar
+    fig.write_html(f'{folder}mapa_interativos.html', full_html = True, include_plotlyjs = 'cnd')
+    print(f'Arquivo gerado com sucesso! \nSeu arquivo foi salvo em: {folder} mapa_interativos.html')
+
+#iniciar o servidor
 if __name__ == '__main__':
-    init_db()
-    app.run(debug=True)
-
+    main()
