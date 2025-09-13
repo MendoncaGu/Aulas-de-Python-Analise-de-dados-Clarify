@@ -48,7 +48,7 @@ def standartize_columns(df: pd.DataFrame) -> pd.DataFrame:
     out['lat'] =    pd.to_numeric(df[lat_col], errors='coerce')
     out['lon'] =    pd.to_numeric(df[lon_col], errors='coerce')
     out['custo'] =  pd.to_numeric(df[cost_col], errors='coerce')
-    out['nome'] =   pd.to_numeric(df[name_col], errors='coerce')
+    out['nome'] =   df[name_col].astype(str)
 
     #remove as linhas sem coordenadas
     out = out.dropna(subset=['lat', 'lon']).reset_index(drop=True)
